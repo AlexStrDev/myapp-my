@@ -1,4 +1,4 @@
-package com.example.pixelplace.api.query;
+package com.example.pixelplace.api;
 
 import com.example.pixelplace.projection.dto.CanvasDTO;
 import com.example.pixelplace.projection.dto.CanvasRenderDTO;
@@ -7,8 +7,12 @@ import com.example.pixelplace.projection.entity.CanvasView;
 import com.example.pixelplace.projection.entity.PixelView;
 import com.example.pixelplace.projection.repository.CanvasViewRepository;
 import com.example.pixelplace.projection.repository.PixelViewRepository;
+import com.example.pixelplace.service.CanvasImageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -28,6 +32,7 @@ public class CanvasQueryController {
 
     private final CanvasViewRepository canvasViewRepository;
     private final PixelViewRepository pixelViewRepository;
+    private final CanvasImageService canvasImageService;
 
     /**
      * GET /api/canvas
@@ -154,6 +159,76 @@ public class CanvasQueryController {
         log.info("✅ Canvas renderizado: {} - {}% cobertura", canvasId, String.format("%.2f", coverage));
 
         return ResponseEntity.ok(renderDTO);
+    }
+
+    /**
+     * GET /api/canvas/{canvasId}/image
+     * Generar imagen PNG del canvas
+     *
+     * Query params:
+     * - scale: Factor de escala (1-100, default: 1)
+     * - grid: Mostrar cuadrícula (true/false, default: false)
+     *
+     * Ejemplo: GET /api/canvas/abc-123/image?scale=10&grid=true
+     */
+    @GetMapping("/{canvasId}/image")
+    public ResponseEntity<byte[]> generateCanvasImage(
+            @PathVariable String canvasId,
+            @RequestParam(defaultValue = "1") int scale,
+            @RequestParam(defaultValue = "false") boolean grid) {
+
+        log.info("🖼️ Generando imagen PNG del canvas: {} (escala: {}x, grid: {})",
+                canvasId, scale, grid);
+
+        try {
+            byte[] imageBytes;
+
+            if (grid) {
+                imageBytes = canvasImageService.generateCanvasImageWithGrid(canvasId, scale, true);
+            } else {
+                imageBytes = canvasImageService.generateCanvasImage(canvasId, scale);
+            }
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.IMAGE_PNG);
+            headers.setContentLength(imageBytes.length);
+            headers.set("Content-Disposition", "inline; filename=\"canvas-" + canvasId + ".png\"");
+
+            log.info("✅ Imagen generada: {} bytes", imageBytes.length);
+
+            return new ResponseEntity<>(imageBytes, headers, HttpStatus.OK);
+
+        } catch (Exception e) {
+            log.error("❌ Error generando imagen del canvas: {}", canvasId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    /**
+     * GET /api/canvas/{canvasId}/image/download
+     * Descargar imagen PNG del canvas (como archivo)
+     */
+    @GetMapping("/{canvasId}/image/download")
+    public ResponseEntity<byte[]> downloadCanvasImage(
+            @PathVariable String canvasId,
+            @RequestParam(defaultValue = "10") int scale) {
+
+        log.info("📥 Descargando imagen PNG del canvas: {} (escala: {}x)", canvasId, scale);
+
+        try {
+            byte[] imageBytes = canvasImageService.generateCanvasImage(canvasId, scale);
+
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.IMAGE_PNG);
+            headers.setContentLength(imageBytes.length);
+            headers.set("Content-Disposition", "attachment; filename=\"canvas-" + canvasId + ".png\"");
+
+            return new ResponseEntity<>(imageBytes, headers, HttpStatus.OK);
+
+        } catch (Exception e) {
+            log.error("❌ Error descargando imagen del canvas: {}", canvasId, e);
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
+        }
     }
 
     /**

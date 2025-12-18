@@ -5,11 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
-/**
- * DTO para respuesta de Canvas
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,7 +18,7 @@ public class CanvasDTO {
     private Integer height;
     private String backgroundColor;
     private String createdBy;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
-    private Long pixelCount;  // Número de pixels colocados
+    private Instant createdAt;
+    private Instant updatedAt;
+    private Long pixelCount;
 }

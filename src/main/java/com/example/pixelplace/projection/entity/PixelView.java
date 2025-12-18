@@ -6,14 +6,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
-/**
- * Vista materializada de Pixels.
- *
- * Propósito: Almacenar estado actual de cada pixel para queries eficientes.
- * Se actualiza (UPSERT) cuando se emiten PixelPlacedEvent.
- */
 @Entity
 @Table(
         name = "pixel_view",
@@ -37,7 +31,7 @@ public class PixelView {
 
     @Id
     @Column(name = "pixel_id", length = 255)
-    private String pixelId;  // "{x}_{y}"
+    private String pixelId;
 
     @Column(name = "canvas_id", nullable = false, length = 255)
     private String canvasId;
@@ -55,5 +49,5 @@ public class PixelView {
     private String userId;
 
     @Column(name = "placed_at", nullable = false)
-    private LocalDateTime placedAt;
+    private Instant placedAt;
 }

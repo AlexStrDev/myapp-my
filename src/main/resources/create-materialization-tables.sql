@@ -14,8 +14,8 @@ CREATE TABLE IF NOT EXISTS canvas_view (
     height INT NOT NULL,
     background_color VARCHAR(7) NOT NULL,
     created_by VARCHAR(255),
-    created_at TIMESTAMP NOT NULL,
-    updated_at TIMESTAMP NOT NULL
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );
 
 -- Índices para canvas_view
@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS pixel_view (
     y INT NOT NULL,
     color VARCHAR(7) NOT NULL,
     user_id VARCHAR(255) NOT NULL,
-    placed_at TIMESTAMP NOT NULL,
+    placed_at TIMESTAMP WITH TIME ZONE NOT NULL,
 
     -- Foreign key con CASCADE DELETE
     CONSTRAINT fk_pixel_canvas FOREIGN KEY (canvas_id)
@@ -61,6 +61,8 @@ COMMENT ON COLUMN canvas_view.name IS 'Nombre del canvas';
 COMMENT ON COLUMN canvas_view.width IS 'Ancho del canvas en pixels';
 COMMENT ON COLUMN canvas_view.height IS 'Altura del canvas en pixels';
 COMMENT ON COLUMN canvas_view.background_color IS 'Color de fondo en formato hex (#RRGGBB)';
+COMMENT ON COLUMN canvas_view.created_at IS 'Timestamp UTC de creación';
+COMMENT ON COLUMN canvas_view.updated_at IS 'Timestamp UTC de última actualización';
 
 COMMENT ON COLUMN pixel_view.pixel_id IS 'ID del pixel en formato {x}_{y}';
 COMMENT ON COLUMN pixel_view.canvas_id IS 'ID del canvas al que pertenece';
@@ -68,36 +70,4 @@ COMMENT ON COLUMN pixel_view.x IS 'Coordenada X del pixel';
 COMMENT ON COLUMN pixel_view.y IS 'Coordenada Y del pixel';
 COMMENT ON COLUMN pixel_view.color IS 'Color del pixel en formato hex (#RRGGBB)';
 COMMENT ON COLUMN pixel_view.user_id IS 'ID del usuario que colocó el pixel';
-COMMENT ON COLUMN pixel_view.placed_at IS 'Fecha/hora en que se colocó el pixel';
-
--- -----------------------------------------------
--- Queries de ejemplo
--- -----------------------------------------------
-
--- Renderizar canvas completo
--- SELECT * FROM pixel_view WHERE canvas_id = 'canvas-id-here';
-
--- Obtener pixel específico
--- SELECT * FROM pixel_view WHERE canvas_id = 'canvas-id' AND x = 30 AND y = 50;
-
--- Listar canvas por fecha de creación
--- SELECT * FROM canvas_view ORDER BY created_at DESC;
-
--- Contar pixels por canvas
--- SELECT canvas_id, COUNT(*) as pixel_count
--- FROM pixel_view
--- GROUP BY canvas_id;
-
--- Obtener pixels de un usuario
--- SELECT * FROM pixel_view WHERE user_id = 'user-id-here';
-
--- Calcular cobertura del canvas
--- SELECT
---     c.canvas_id,
---     c.name,
---     c.width * c.height as total_pixels,
---     COUNT(p.pixel_id) as placed_pixels,
---     (COUNT(p.pixel_id)::float / (c.width * c.height)::float * 100) as coverage_percentage
--- FROM canvas_view c
--- LEFT JOIN pixel_view p ON c.canvas_id = p.canvas_id
--- GROUP BY c.canvas_id, c.name, c.width, c.height;
+COMMENT ON COLUMN pixel_view.placed_at IS 'Timestamp UTC de cuándo se colocó el pixel';

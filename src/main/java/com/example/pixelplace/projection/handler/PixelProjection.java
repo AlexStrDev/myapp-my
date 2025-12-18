@@ -8,6 +8,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.axonframework.eventhandling.EventHandler;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 
@@ -20,30 +21,37 @@ public class PixelProjection {
     private final CanvasViewRepository canvasViewRepository;
 
     @EventHandler
+    @Transactional
     public void on(CanvasCreatedEvent event) {
-        log.info("📊 Materializando Canvas: {} - Dimensiones: {}x{}",
+        log.info("Materializando Canvas: {} - Dimensiones: {}x{}",
                 event.getCanvasId(), event.getWidth(), event.getHeight());
 
         try {
+            Instant now = Instant.now();
             canvasViewRepository.upsertCanvas(
                     event.getCanvasId(),
+                    event.getName(),
                     event.getWidth(),
                     event.getHeight(),
-                    Instant.now()
+                    event.getBackgroundColor(),
+                    event.getCreatedBy(),
+                    now,
+                    now
             );
 
-            log.info("✅ Canvas materializado: {}", event.getCanvasId());
+            log.info("Canvas materializado: {}", event.getCanvasId());
         } catch (Exception e) {
-            log.error("💥 Error materializando Canvas: {}", event.getCanvasId(), e);
+            log.error("Error materializando Canvas: {}", event.getCanvasId(), e);
             throw e;
         }
     }
 
     @EventHandler
+    @Transactional
     public void on(PixelPlacedEvent event) {
         String pixelId = event.getX() + "_" + event.getY();
 
-        log.info("📊 Materializando Pixel: {} en ({}, {}) - Color: {}",
+        log.info("Materializando Pixel: {} en ({}, {}) - Color: {}",
                 pixelId, event.getX(), event.getY(), event.getColor());
 
         try {
@@ -54,12 +62,12 @@ public class PixelProjection {
                     event.getY(),
                     event.getColor(),
                     event.getUserId(),
-                    Instant.now()  // ✅ CORREGIDO: Instant.now() en lugar de LocalDateTime.now()
+                    Instant.now()
             );
 
-            log.info("✅ Pixel materializado: {}", pixelId);
+            log.info("Pixel materializado: {}", pixelId);
         } catch (Exception e) {
-            log.error("💥 Error materializando Pixel: {}", pixelId, e);
+            log.error("Error materializando Pixel: {}", pixelId, e);
             throw e;
         }
     }

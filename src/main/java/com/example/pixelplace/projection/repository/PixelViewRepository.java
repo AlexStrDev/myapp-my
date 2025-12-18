@@ -14,13 +14,6 @@ import java.util.Optional;
 @Repository
 public interface PixelViewRepository extends JpaRepository<PixelView, String> {
 
-    /**
-     * UPSERT para materializar pixels.
-     *
-     * ON CONFLICT en PRIMARY KEY (pixel_id) para evitar errores de constraint.
-     * Si el pixel_id ya existe, actualiza todos los campos excepto pixel_id.
-     * Si no existe, inserta nuevo registro.
-     */
     @Modifying
     @Query(value = """
         INSERT INTO pixel_view (pixel_id, canvas_id, x, y, color, user_id, placed_at)
@@ -44,34 +37,16 @@ public interface PixelViewRepository extends JpaRepository<PixelView, String> {
             @Param("placedAt") Instant placedAt
     );
 
-    /**
-     * Buscar todos los pixels de un canvas
-     */
     List<PixelView> findByCanvasId(String canvasId);
 
-    /**
-     * Buscar pixel específico por canvas y coordenadas
-     */
     Optional<PixelView> findByCanvasIdAndXAndY(String canvasId, Integer x, Integer y);
 
-    /**
-     * Buscar pixels en un área rectangular (región)
-     */
     List<PixelView> findByCanvasIdAndXBetweenAndYBetween(
             String canvasId, int xStart, int xEnd, int yStart, int yEnd);
 
-    /**
-     * Contar total de pixels en un canvas
-     */
     long countByCanvasId(String canvasId);
 
-    /**
-     * Buscar pixels por usuario
-     */
     List<PixelView> findByUserId(String userId);
 
-    /**
-     * Buscar pixels recientes (últimos N pixels colocados)
-     */
     List<PixelView> findTop100ByCanvasIdOrderByPlacedAtDesc(String canvasId);
 }

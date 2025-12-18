@@ -5,11 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.time.LocalDateTime;
+import java.time.Instant;
 
-/**
- * DTO para respuesta de Pixel
- */
 @Data
 @Builder
 @NoArgsConstructor
@@ -21,5 +18,5 @@ public class PixelDTO {
     private Integer y;
     private String color;
     private String userId;
-    private LocalDateTime placedAt;
+    private Instant placedAt;
 }
