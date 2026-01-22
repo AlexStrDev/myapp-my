@@ -15,9 +15,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.concurrent.CompletableFuture;
 
-/**
- * Controller REST para operaciones de Pixel.
- */
 @Slf4j
 @RestController
 @RequestMapping("/api/pixels")
@@ -29,18 +26,6 @@ public class PixelController {
         this.commandGateway = commandGateway;
     }
 
-    /**
-     * Coloca/actualiza un pixel en el canvas.
-     *
-     * POST /api/pixels
-     * {
-     *   "canvasId": "uuid",
-     *   "x": 30,
-     *   "y": 50,
-     *   "color": "#FF5733",
-     *   "userId": "user123"
-     * }
-     */
     @PostMapping
     public CompletableFuture<ResponseEntity<PixelResponse>> placePixel(
             @Valid @RequestBody PlacePixelRequest request) {
@@ -48,8 +33,9 @@ public class PixelController {
         log.info("📨 Solicitud de colocar pixel: ({}, {}) - Color: {} - Usuario: {}",
                 request.getX(), request.getY(), request.getColor(), request.getUserId());
 
-        // Generar pixelId: "{x}_{y}"
-        String pixelId = String.format("%d_%d", request.getX(), request.getY());
+        // ✅ CAMBIO: Generar pixelId con canvasId incluido
+        String pixelId = String.format("%s_%d_%d", 
+                request.getCanvasId(), request.getX(), request.getY());
 
         PlacePixelCommand command = new PlacePixelCommand(
                 pixelId,
