@@ -18,6 +18,10 @@ import java.util.List;
  * 
  * Cada tile es una región del canvas (ej: 100x100 pixeles).
  * Genera y actualiza tiles independientemente.
+ * 
+ * CAMBIOS:
+ * - Grid se dibuja DESPUÉS de los pixeles para evitar sobrescritura
+ * - Color del grid más visible (alpha 150 en vez de 80)
  */
 @Slf4j
 @Service
@@ -43,8 +47,8 @@ public class TileImageService {
                                          List<PixelState> newPixels, 
                                          int scale, boolean grid) throws IOException {
         
-        log.info("🎨 Actualizando tile incremental: canvas={}, tile=({},{}), pixels={}, scale={}", 
-                canvasId, tileX, tileY, newPixels.size(), scale);
+        log.info("🎨 Actualizando tile incremental: canvas={}, tile=({},{}), pixels={}, scale={}, grid={}", 
+                canvasId, tileX, tileY, newPixels.size(), scale, grid);
 
         // 1. Obtener metadata del canvas
         CanvasState canvasState = canvasProjection.rebuildCanvasState(canvasId);
@@ -52,10 +56,10 @@ public class TileImageService {
         // 2. Intentar cargar imagen anterior del tile
         BufferedImage image = imageRepository.loadTileImage(canvasId, tileX, tileY, scale);
 
-        // 3. Si no existe, crear imagen base del tile
+        // 3. Si no existe, crear imagen base del tile (sin grid)
         if (image == null) {
             log.info("📄 No existe tile previo, creando tile base...");
-            image = createBaseTileImage(canvasState, tileX, tileY, scale);
+            image = createBaseTileImage(canvasState, tileX, tileY, scale, false);
         }
 
         // 4. Calcular offsets del tile
@@ -66,6 +70,8 @@ public class TileImageService {
         // 5. Pintar nuevos pixeles sobre la imagen existente
         Graphics2D g2d = image.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
 
         for (PixelState pixel : newPixels) {
             // Verificar que el pixel pertenece a este tile
@@ -86,32 +92,39 @@ public class TileImageService {
             }
         }
 
-        // 6. Redibujar grid si está habilitado
-        if (grid && scale > 1) {
-            drawTileGrid(g2d, tileSize, tileSize, scale);
-        }
-
         g2d.dispose();
+
+        // 6. IMPORTANTE: Dibujar grid DESPUÉS de los pixeles
+        if (grid && scale > 1) {
+            int tileEndX = Math.min(tileStartX + tileSize, canvasState.getWidth());
+            int tileEndY = Math.min(tileStartY + tileSize, canvasState.getHeight());
+            int actualTileWidth = tileEndX - tileStartX;
+            int actualTileHeight = tileEndY - tileStartY;
+            
+            image = addGridToTileImage(image, actualTileWidth, actualTileHeight, scale);
+        }
 
         // 7. Guardar tile actualizado
         imageRepository.saveTileImage(canvasId, tileX, tileY, image, scale);
 
-        log.info("✅ Tile actualizado: ({}, {}) - {} pixeles pintados", 
-                tileX, tileY, newPixels.size());
+        log.info("✅ Tile actualizado: ({}, {}) - {} pixeles pintados, grid={}", 
+                tileX, tileY, newPixels.size(), grid);
 
         return image;
     }
 
     /**
-     * Crea una imagen base para un tile (fondo + grid opcional).
+     * Crea una imagen base para un tile (fondo solamente, sin grid).
      * 
      * @param canvasState Estado del canvas
      * @param tileX Índice X del tile
      * @param tileY Índice Y del tile
      * @param scale Factor de escala
+     * @param includeGrid Si incluir grid (normalmente false para incremental)
      * @return Imagen base del tile
      */
-    private BufferedImage createBaseTileImage(CanvasState canvasState, int tileX, int tileY, int scale) {
+    private BufferedImage createBaseTileImage(CanvasState canvasState, int tileX, int tileY, 
+                                              int scale, boolean includeGrid) {
         int tileSize = properties.getTileSize();
         
         // Calcular bounds del tile (puede ser menor en los bordes)
@@ -134,16 +147,13 @@ public class TileImageService {
 
         Graphics2D g2d = image.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
 
         // Pintar fondo
         Color bgColor = parseColor(canvasState.getBackgroundColor());
         g2d.setColor(bgColor);
         g2d.fillRect(0, 0, scaledWidth, scaledHeight);
-
-        // Dibujar grid si está habilitado
-        if (properties.isDefaultGrid() && scale > 1) {
-            drawTileGrid(g2d, actualTileWidth, actualTileHeight, scale);
-        }
 
         g2d.dispose();
 
@@ -154,15 +164,22 @@ public class TileImageService {
     }
 
     /**
-     * Dibuja una cuadrícula sobre el tile.
+     * Agrega grid a una imagen de tile existente.
+     * Se usa DESPUÉS de pintar pixeles para evitar sobrescritura.
      * 
-     * @param g2d Graphics2D context
+     * @param image Imagen del tile sobre la cual dibujar el grid
      * @param widthInPixels Ancho en pixeles del tile (no escalados)
      * @param heightInPixels Alto en pixeles del tile (no escalados)
      * @param scale Factor de escala actual
+     * @return Imagen del tile con grid aplicado
      */
-    private void drawTileGrid(Graphics2D g2d, int widthInPixels, int heightInPixels, int scale) {
-        g2d.setColor(new Color(128, 128, 128, 80));
+    private BufferedImage addGridToTileImage(BufferedImage image, int widthInPixels, 
+                                             int heightInPixels, int scale) {
+        Graphics2D g2d = image.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        
+        // Color del grid: gris claro con alpha 150 (más visible que 80)
+        g2d.setColor(new Color(128, 128, 128, 150));
 
         int scaledWidth = widthInPixels * scale;
         int scaledHeight = heightInPixels * scale;
@@ -178,6 +195,12 @@ public class TileImageService {
             int scaledY = y * scale;
             g2d.drawLine(0, scaledY, scaledWidth, scaledY);
         }
+
+        g2d.dispose();
+
+        log.debug("📐 Grid aplicado a tile: {}x{} pixeles", widthInPixels, heightInPixels);
+
+        return image;
     }
 
     /**
@@ -218,13 +241,13 @@ public class TileImageService {
      */
     public BufferedImage regenerateFullTileImage(String canvasId, int tileX, int tileY, 
                                                  int scale, boolean grid) throws IOException {
-        log.info("🔄 Regenerando tile completo: canvas={}, tile=({},{}), scale={}", 
-                canvasId, tileX, tileY, scale);
+        log.info("🔄 Regenerando tile completo: canvas={}, tile=({},{}), scale={}, grid={}", 
+                canvasId, tileX, tileY, scale, grid);
 
         CanvasState canvasState = canvasProjection.rebuildCanvasState(canvasId);
 
-        // Crear imagen base del tile
-        BufferedImage image = createBaseTileImage(canvasState, tileX, tileY, scale);
+        // Crear imagen base del tile (sin grid)
+        BufferedImage image = createBaseTileImage(canvasState, tileX, tileY, scale, false);
 
         // Pintar TODOS los pixeles del tile
         int tileSize = properties.getTileSize();
@@ -235,6 +258,8 @@ public class TileImageService {
 
         Graphics2D g2d = image.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
 
         int pixelCount = 0;
         for (PixelState pixel : canvasState.getPixels().values()) {
@@ -252,19 +277,20 @@ public class TileImageService {
             }
         }
 
+        g2d.dispose();
+
+        // IMPORTANTE: Aplicar grid DESPUÉS de pintar todos los pixeles
         if (grid && scale > 1) {
             int actualWidth = tileEndX - tileStartX;
             int actualHeight = tileEndY - tileStartY;
-            drawTileGrid(g2d, actualWidth, actualHeight, scale);
+            image = addGridToTileImage(image, actualWidth, actualHeight, scale);
         }
-
-        g2d.dispose();
 
         // Guardar tile
         imageRepository.saveTileImage(canvasId, tileX, tileY, image, scale);
 
-        log.info("✅ Tile regenerado: ({}, {}) - {} pixeles totales", 
-                tileX, tileY, pixelCount);
+        log.info("✅ Tile regenerado: ({}, {}) - {} pixeles totales, grid={}", 
+                tileX, tileY, pixelCount, grid);
 
         return image;
     }

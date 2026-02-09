@@ -5,16 +5,25 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Repository;
 
+import javax.imageio.IIOImage;
 import javax.imageio.ImageIO;
+import javax.imageio.ImageWriteParam;
+import javax.imageio.ImageWriter;
+import javax.imageio.stream.ImageOutputStream;
 import java.awt.image.BufferedImage;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Iterator;
 
 /**
  * Repositorio para guardar y cargar imágenes del canvas desde el filesystem.
+ * 
+ * CAMBIOS:
+ * - Compresión PNG optimizada (nivel 3 en vez de 6) para mejor calidad
+ * - Escritura de imagen con parámetros de calidad configurables
  */
 @Slf4j
 @Repository
@@ -24,7 +33,7 @@ public class CanvasImageFileRepository {
     private final ImageGenerationProperties properties;
 
     /**
-     * Guarda una imagen en el filesystem.
+     * Guarda una imagen en el filesystem con compresión optimizada.
      * 
      * @param canvasId ID del canvas
      * @param image Imagen a guardar
@@ -38,14 +47,49 @@ public class CanvasImageFileRepository {
         String filename = scale == 1 ? "latest.png" : String.format("latest_%dx.png", scale);
         Path imagePath = canvasDir.resolve(filename);
 
-        File outputFile = imagePath.toFile();
-        ImageIO.write(image, "PNG", outputFile);
+        // Guardar con compresión optimizada
+        saveImageWithCompression(image, imagePath.toFile());
 
         log.info("💾 Imagen guardada: {} ({}x{}, {}KB)", 
                 imagePath, image.getWidth(), image.getHeight(), 
-                outputFile.length() / 1024);
+                imagePath.toFile().length() / 1024);
 
         return imagePath;
+    }
+
+    /**
+     * Guarda una imagen con parámetros de compresión optimizados.
+     * Compresión nivel 3 (en vez de 6) para mejor calidad.
+     * 
+     * @param image Imagen a guardar
+     * @param outputFile Archivo de salida
+     */
+    private void saveImageWithCompression(BufferedImage image, File outputFile) throws IOException {
+        Iterator<ImageWriter> writers = ImageIO.getImageWritersByFormatName("png");
+        
+        if (!writers.hasNext()) {
+            // Fallback a guardado simple si no hay writer disponible
+            ImageIO.write(image, "PNG", outputFile);
+            return;
+        }
+        
+        ImageWriter writer = writers.next();
+        ImageWriteParam writeParam = writer.getDefaultWriteParam();
+        
+        // Configurar compresión PNG
+        if (writeParam.canWriteCompressed()) {
+            writeParam.setCompressionMode(ImageWriteParam.MODE_EXPLICIT);
+            // Nivel 3 de compresión (0=sin compresión, 9=máxima compresión)
+            // Nivel 3 balancea tamaño y calidad de imagen
+            writeParam.setCompressionQuality(0.7f); // Equivalente a nivel ~3
+        }
+        
+        try (ImageOutputStream ios = ImageIO.createImageOutputStream(outputFile)) {
+            writer.setOutput(ios);
+            writer.write(null, new IIOImage(image, null, null), writeParam);
+        } finally {
+            writer.dispose();
+        }
     }
 
     /**
@@ -147,7 +191,7 @@ public class CanvasImageFileRepository {
     // ========== MÉTODOS PARA TILES ==========
 
     /**
-     * Guarda una imagen de tile en el filesystem.
+     * Guarda una imagen de tile en el filesystem con compresión optimizada.
      * 
      * @param canvasId ID del canvas
      * @param tileX Índice X del tile
@@ -167,12 +211,12 @@ public class CanvasImageFileRepository {
         
         Path imagePath = tilesDir.resolve(filename);
 
-        File outputFile = imagePath.toFile();
-        ImageIO.write(image, "PNG", outputFile);
+        // Guardar con compresión optimizada
+        saveImageWithCompression(image, imagePath.toFile());
 
         log.info("💾 Tile guardado: {} ({}x{}, {}KB)", 
                 imagePath, image.getWidth(), image.getHeight(), 
-                outputFile.length() / 1024);
+                imagePath.toFile().length() / 1024);
 
         return imagePath;
     }

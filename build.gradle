@@ -20,6 +20,9 @@ dependencies {
     // Web
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
+    // ⭐ WebSocket (NUEVO)
+    implementation 'org.springframework.boot:spring-boot-starter-websocket'
+
     // PostgreSQL
     runtimeOnly 'org.postgresql:postgresql'
 

@@ -17,6 +17,11 @@ import java.io.IOException;
  * Soporta:
  * - Scale: Ampliar cada pixel por un factor (útil para zoom)
  * - Grid: Dibujar cuadrícula entre pixeles
+ * 
+ * CAMBIOS:
+ * - Grid se dibuja DESPUÉS de los pixeles para evitar sobrescritura
+ * - Color del grid más visible (alpha 150 en vez de 80)
+ * - Mejor configuración de rendering hints
  */
 @Slf4j
 @Service
@@ -56,8 +61,10 @@ public class CanvasImageService {
         
         Graphics2D g2d = image.createGraphics();
         
-        // Anti-aliasing para grid más suave
+        // Configuración de rendering de alta calidad
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
         
         // Fondo
         g2d.setColor(parseColor(state.getBackgroundColor()));
@@ -74,15 +81,15 @@ public class CanvasImageService {
             );
         }
         
-        // Dibujar grid si está habilitado
-        if (grid && scale > 1) {
-            drawGrid(g2d, state.getWidth(), state.getHeight(), scale);
-        }
-        
         g2d.dispose();
         
-        log.info("✅ Imagen generada: {}x{} con {} pixeles", 
-                scaledWidth, scaledHeight, state.getPixelCount());
+        // IMPORTANTE: Dibujar grid DESPUÉS de los pixeles
+        if (grid && scale > 1) {
+            image = addGridToImage(image, state.getWidth(), state.getHeight(), scale);
+        }
+        
+        log.info("✅ Imagen generada: {}x{} con {} pixeles, grid={}", 
+                scaledWidth, scaledHeight, state.getPixelCount(), grid);
         
         return encodeImage(image);
     }
@@ -125,6 +132,8 @@ public class CanvasImageService {
         
         Graphics2D g2d = image.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
         
         // Fondo
         g2d.setColor(parseColor(state.getBackgroundColor()));
@@ -142,14 +151,14 @@ public class CanvasImageService {
                     g2d.fillRect(relX, relY, scale, scale);
                 });
         
-        // Dibujar grid si está habilitado
-        if (grid && scale > 1) {
-            drawGrid(g2d, tileWidth, tileHeight, scale);
-        }
-        
         g2d.dispose();
         
-        log.info("✅ Tile generado: {}x{}", scaledWidth, scaledHeight);
+        // IMPORTANTE: Dibujar grid DESPUÉS de los pixeles
+        if (grid && scale > 1) {
+            image = addGridToImage(image, tileWidth, tileHeight, scale);
+        }
+        
+        log.info("✅ Tile generado: {}x{}, grid={}", scaledWidth, scaledHeight, grid);
         
         return encodeImage(image);
     }
@@ -190,6 +199,8 @@ public class CanvasImageService {
         
         Graphics2D g2d = image.createGraphics();
         g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
+        g2d.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        g2d.setRenderingHint(RenderingHints.KEY_COLOR_RENDERING, RenderingHints.VALUE_COLOR_RENDER_QUALITY);
         
         // Fondo
         g2d.setColor(parseColor(state.getBackgroundColor()));
@@ -206,27 +217,33 @@ public class CanvasImageService {
                     g2d.fillRect(relX, relY, scale, scale);
                 });
         
-        // Dibujar grid si está habilitado
-        if (grid && scale > 1) {
-            drawGrid(g2d, width, height, scale);
-        }
-        
         g2d.dispose();
+        
+        // IMPORTANTE: Dibujar grid DESPUÉS de los pixeles
+        if (grid && scale > 1) {
+            image = addGridToImage(image, width, height, scale);
+        }
         
         return encodeImage(image);
     }
     
     /**
-     * Dibuja una cuadrícula sobre la imagen
+     * Agrega grid a una imagen existente.
+     * Se usa DESPUÉS de pintar pixeles para evitar sobrescritura.
      * 
-     * @param g2d Graphics2D context
+     * @param image Imagen sobre la cual dibujar el grid
      * @param widthInPixels Ancho en pixeles del canvas (no escalados)
      * @param heightInPixels Alto en pixeles del canvas (no escalados)
      * @param scale Factor de escala actual
+     * @return Imagen con grid aplicado
      */
-    private void drawGrid(Graphics2D g2d, int widthInPixels, int heightInPixels, int scale) {
-        // Color del grid: gris claro semi-transparente
-        g2d.setColor(new Color(128, 128, 128, 80));
+    private BufferedImage addGridToImage(BufferedImage image, int widthInPixels, 
+                                         int heightInPixels, int scale) {
+        Graphics2D g2d = image.createGraphics();
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        
+        // Color del grid: gris claro con alpha 150 (más visible que 80)
+        g2d.setColor(new Color(128, 128, 128, 150));
         
         int scaledWidth = widthInPixels * scale;
         int scaledHeight = heightInPixels * scale;
@@ -242,6 +259,10 @@ public class CanvasImageService {
             int scaledY = y * scale;
             g2d.drawLine(0, scaledY, scaledWidth, scaledY);
         }
+        
+        g2d.dispose();
+        
+        return image;
     }
     
     /**
