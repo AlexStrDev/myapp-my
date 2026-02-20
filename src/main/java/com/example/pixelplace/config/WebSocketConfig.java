@@ -7,9 +7,10 @@ import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
 
 /**
- * Configuración de WebSocket para comunicación en tiempo real.
+ * Configuración de WebSocket para eventos en tiempo real.
  * 
- * Permite a los clientes suscribirse a actualizaciones de pixeles via STOMP.
+ * Permite a los clientes conectarse vía WebSocket y recibir
+ * notificaciones de pixeles colocados.
  */
 @Configuration
 @EnableWebSocketMessageBroker
@@ -17,18 +18,27 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
 
     @Override
     public void configureMessageBroker(MessageBrokerRegistry config) {
-        // Habilitar broker simple en memoria para enviar mensajes a clientes
+        // Habilitar un broker de mensajes simple en memoria
+        // Los clientes se suscriben a /topic/*
         config.enableSimpleBroker("/topic");
         
-        // Prefijo para mensajes desde clientes al servidor
+        // Los mensajes enviados al servidor usan prefijo /app
         config.setApplicationDestinationPrefixes("/app");
     }
 
     @Override
     public void registerStompEndpoints(StompEndpointRegistry registry) {
-        // Endpoint WebSocket con SockJS fallback
+        // Endpoint WebSocket en /ws
         registry.addEndpoint("/ws")
-                .setAllowedOriginPatterns("*") // En producción, especificar orígenes
+                // CORS: Permitir conexiones desde el frontend
+                // PRODUCCIÓN: Cambiar a dominio específico
+                .setAllowedOriginPatterns(
+                    "http://localhost:3000",
+                    "http://localhost:5173",
+                    "http://127.0.0.1:3000",
+                    "http://127.0.0.1:5173"
+                )
+                // SockJS fallback para navegadores que no soportan WebSocket
                 .withSockJS();
     }
 }

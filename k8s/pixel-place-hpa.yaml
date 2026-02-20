@@ -1,0 +1,116 @@
+##############################################################################
+# pixel-place-hpa.yaml
+#
+# HorizontalPodAutoscaler para pixel-place.
+#
+# MATEMÁTICA DE PARTICIONES:
+#
+#   Canvas 1000x1000 con tiles 100x100 → 10x10 = 100 tiles = 100 particiones
+#
+#   command.concurrency = 10 (hilos por pod)
+#   → máximo pods útiles = 100 particiones / 10 concurrency = 10 pods
+#   → más de 10 pods = pods sin particiones (idle)
+#
+#   Por eso: maxReplicas = 10
+#
+##############################################################################
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pixel-place-hpa
+  namespace: pixel-place
+  labels:
+    app: pixel-place
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pixel-place
+
+  # ── Límites de réplicas ──────────────────────────────────────
+  # minReplicas: 2 para alta disponibilidad (1 puede morir sin downtime)
+  # maxReplicas: 10 = 100 particiones / concurrency=10 por pod
+  minReplicas: 2
+  maxReplicas: 10
+
+  # ── Métricas de escalado ─────────────────────────────────────
+  metrics:
+
+    # MÉTRICA 1: CPU
+    # pixel-place es CPU-intensivo por la generación de imágenes PNG.
+    # Cuando los pods generen muchas imágenes + procesen tiles, el CPU sube.
+    # Umbral: 70% del request de CPU
+    # request=500m → umbral=350m de uso promedio entre todos los pods
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+
+    # MÉTRICA 2: Memory
+    # pixel-place carga imágenes en memoria para procesamiento incremental.
+    # Con muchas conexiones WebSocket y tiles activos, la memoria sube.
+    # Umbral: 800Mi de uso promedio (de 1536Mi limit → ~52%)
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: AverageValue
+          averageValue: "800Mi"
+
+  # ── Políticas de comportamiento ──────────────────────────────
+  behavior:
+
+    # SCALE UP: cuando hay sobrecarga de tiles/pixels
+    # Pixel-place puede tener picos de tráfico cuando muchos usuarios dibujan.
+    scaleUp:
+      stabilizationWindowSeconds: 30     # 30s de métricas altas antes de subir
+      selectPolicy: Max
+      policies:
+        # Sube máximo 2 pods cada 60s
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+        # O sube hasta 50% de las réplicas actuales cada 60s
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+
+    # SCALE DOWN: conservador para no perder conexiones WebSocket ni triggers rebalanceo
+    # Un scale-down desconecta clientes WebSocket + hace rebalanceo de particiones.
+    # Por eso esperamos 5 minutos de baja actividad antes de bajar.
+    scaleDown:
+      stabilizationWindowSeconds: 300    # 5 minutos de métricas bajas
+      selectPolicy: Min
+      policies:
+        # Baja máximo 1 pod cada 120s
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+        # O baja máximo 20% cada 120s
+        - type: Percent
+          value: 20
+          periodSeconds: 120
+
+---
+##############################################################################
+# PodDisruptionBudget
+#
+# Garantiza que siempre haya al menos 1 pod disponible.
+# Previene que Kubernetes baje todos los pods a la vez durante:
+#   - Mantenimiento del nodo
+#   - Rolling update
+#   - Scale-down agresivo
+##############################################################################
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pixel-place-pdb
+  namespace: pixel-place
+spec:
+  minAvailable: 1   # Siempre al menos 1 pod activo
+  selector:
+    matchLabels:
+      app: pixel-place

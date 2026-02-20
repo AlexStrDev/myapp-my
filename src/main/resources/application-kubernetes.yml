@@ -1,0 +1,143 @@
+# ============================================================
+# application-kubernetes.yml - pixel-place
+#
+# Profile de Kubernetes. Se activa automáticamente porque
+# el Dockerfile arranca con: -Dspring.profiles.active=kubernetes
+#
+# Este archivo sobreescribe los valores de application.properties
+# con configuración optimizada para el entorno containerizado.
+# ============================================================
+
+# ── Spring Boot Lifecycle ────────────────────────────────────
+spring:
+  kafka:
+    listener:
+      # Tiempo que Spring Boot espera a que los listeners terminen
+      # antes de cerrar el contexto de Spring.
+      # Debe ser MENOR que terminationGracePeriodSeconds (60s).
+      shutdown-timeout: 30000   # 30 segundos en milisegundos
+
+  lifecycle:
+    # Tiempo máximo de shutdown por fase de ciclo de vida
+    timeout-per-shutdown-phase: 30s
+
+  # Datasource: usa la URL inyectada como env var desde el Deployment
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/pixel_place_db}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+
+# ── Axon + Kafka (Auto-scaling de la librería) ───────────────
+axon:
+  kafka:
+    # ─── ACTIVAR SCALING ────────────────────────────────────
+    # Esta es la propiedad clave que activa todos los componentes
+    # de la librería axon-kafka-spring-boot-starter:
+    #   - PartitionAwareRebalanceListener
+    #   - ConsumerMetricsCollector
+    #   - GracefulShutdownManager
+    scaling:
+      enabled: true
+
+    # Bootstrap servers desde env var del Deployment
+    bootstrap-servers: ${AXON_KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+    # ─── CONCURRENCIA AJUSTADA PARA K8s ─────────────────────
+    # FÓRMULA: concurrency = particiones / maxReplicas
+    #
+    # pixel-place tiene 100 particiones (10x10 tiles)
+    # maxReplicas del HPA = 10
+    # → concurrency = 100 / 10 = 10
+    #
+    # Esto garantiza que con 10 pods, cada pod tenga exactamente
+    # 10 particiones (100 / 10 = 10 por pod).
+    # Con 2 pods (mínimo), cada pod tiene 50 particiones
+    # pero concurrency=10 → usa 10 threads, K8s sube pods por CPU.
+
+    command:
+      concurrency: 10           # 100 particiones / 10 pods max = 10 threads/pod
+      timeout-seconds: 30
+      topic: pixel-place-commands
+      reply-topic: pixel-place-command-replies
+      dlq-topic: pixel-place-commands-dlq
+      group-id: pixel-place-command-handlers
+
+    event:
+      concurrency: 10           # Mismo razonamiento que command
+      topic: pixel-place-events
+      group-id: pixel-place-event-processors
+
+    materializer:
+      concurrency: 5            # Materializer menos crítico, menos threads
+      consumer-pool-size: 5
+      group-id: pixel-place-event-materializers
+
+    # ─── TOPICS ─────────────────────────────────────────────
+    topic:
+      partitions: 100           # Debe coincidir con HPA maxReplicas * concurrency
+      replication-factor: 1     # Cambiar a 3 en producción con múltiples brokers
+      # IMPORTANTE: En K8s con la partición ya creada, NO auto-corregir.
+      # Cambiar particiones en caliente puede causar pérdida de orden.
+      auto-correct-partitions: false
+      retention-hours: 168      # 7 días de retención
+
+# ── Generación de imágenes (directorios en K8s) ─────────────
+pixel-place:
+  image:
+    generation:
+      # El directorio viene del mountPath del PVC en el Deployment.
+      # Se sobreescribe con la env var si está definida.
+      storage-directory: ${PIXEL_PLACE_IMAGE_GENERATION_STORAGE_DIRECTORY:/var/canvas-images}
+      enabled: true
+      mode: HYBRID
+      batch-interval-seconds: 5
+      batch-size: 10
+      default-grid: true
+      scale-versions: 1,5,10
+      tiles-enabled: true
+      tile-size: 100
+      tile-scale-versions: 5,10,20
+      tile-batch-size: 5
+
+# ── Actuator + Prometheus (requerido por HPA y KEDA) ─────────
+management:
+  endpoints:
+    web:
+      exposure:
+        # health: liveness/readiness probes de K8s
+        # prometheus: métricas para Prometheus/HPA
+        # kafka-metrics: endpoint propio de la librería (diagnóstico)
+        include: health, info, metrics, prometheus, kafka-metrics
+  endpoint:
+    health:
+      probes:
+        # Activa /actuator/health/liveness y /actuator/health/readiness
+        # Estos son los endpoints que K8s usa como health probes.
+        enabled: true
+      show-details: always
+    prometheus:
+      enabled: true
+  prometheus:
+    metrics:
+      export:
+        enabled: true
+  metrics:
+    # Tags automáticos en todas las métricas (identifican el pod)
+    tags:
+      application: pixel-place
+      pod: ${POD_NAME:local}
+      namespace: ${POD_NAMESPACE:default}
+
+# ── Logging ──────────────────────────────────────────────────
+logging:
+  level:
+    # Scaling de la librería: INFO para ver rebalanceos
+    io.github.axonkafka.scaling: INFO
+    # Kafka internals: WARN para reducir ruido
+    org.apache.kafka.clients.consumer: WARN
+    org.apache.kafka.clients.producer: WARN
+    org.apache.kafka.common.utils: ERROR
+    # Spring Kafka: INFO para ver paradas/arranques de containers
+    org.springframework.kafka.listener: INFO
+    # pixel-place: DEBUG para desarrollo, INFO para producción
+    com.example.pixelplace: INFO

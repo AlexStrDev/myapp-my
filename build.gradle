@@ -14,13 +14,13 @@ repositories {
 }
 
 dependencies {
-    // ⭐ Axon Kafka Starter
+    // ⭐ Axon Kafka Starter (incluye la librería de auto-scaling)
     implementation 'io.github.axonkafka:axon-kafka-spring-boot-starter:1.0.0'
 
     // Web
     implementation 'org.springframework.boot:spring-boot-starter-web'
 
-    // ⭐ WebSocket (NUEVO)
+    // WebSocket
     implementation 'org.springframework.boot:spring-boot-starter-websocket'
 
     // PostgreSQL
@@ -28,6 +28,15 @@ dependencies {
 
     // Validation
     implementation 'org.springframework.boot:spring-boot-starter-validation'
+
+    // ⭐ Actuator — REQUERIDO para health probes de K8s y métricas HPA
+    // Expone: /actuator/health/liveness, /actuator/health/readiness
+    //         /actuator/prometheus, /actuator/kafka-metrics
+    implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+    // ⭐ Micrometer Prometheus — REQUERIDO para que HPA y KEDA lean métricas
+    // Expone las métricas de kafka.consumer.lag, CPU, memory en formato Prometheus
+    implementation 'io.micrometer:micrometer-registry-prometheus'
 
     // Lombok
     compileOnly 'org.projectlombok:lombok'

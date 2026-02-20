@@ -1,0 +1,115 @@
+##############################################################################
+# pixel-place-keda.yaml
+#
+# Alternativa al HPA usando KEDA (Kubernetes Event-Driven Autoscaling).
+#
+# VENTAJA sobre HPA para pixel-place:
+#   - KEDA escala basado en el LAG de Kafka (mensajes pendientes de tiles)
+#   - Cuando hay 1000 pixels por colocar → sube pods inmediatamente
+#   - Cuando el canvas está quieto → puede bajar a 0 pods (ahorro de costos)
+#   - HPA solo mira CPU/Memory, que reacciona DESPUÉS de la carga
+#   - KEDA reacciona ANTES (lag = "hay trabajo pendiente")
+#
+# INSTALACIÓN DE KEDA:
+#   helm repo add kedacore https://kedacore.github.io/charts
+#   helm repo update
+#   helm install keda kedacore/keda --namespace keda --create-namespace
+#
+##############################################################################
+
+# ── ScaledObject: reemplaza al HPA ───────────────────────────
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: pixel-place-keda
+  namespace: pixel-place
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: pixel-place
+
+  # No escala a 0 porque pixel-place tiene WebSocket permanente.
+  # Si no tienes usuarios activos frecuentes, puedes bajar a 0.
+  minReplicaCount: 2
+  maxReplicaCount: 10    # 100 particiones / concurrency=10
+
+  # Ventana de cooldown antes de scale-down (evita flapping)
+  cooldownPeriod: 300    # 5 minutos
+
+  # Intervalo de polling de métricas
+  pollingInterval: 15    # cada 15 segundos
+
+  triggers:
+
+    # ── TRIGGER 1: Lag en el topic de comandos ─────────────
+    # Cada 10 mensajes pendientes en pixel-place-commands → 1 réplica extra
+    # Con 100 pixels pendientes → 10 réplicas (máximo)
+    # Esto da tiempo de respuesta muy rápido ante picos de dibujo
+    - type: kafka
+      metadata:
+        bootstrapServers: "kafka-service:9092"
+        consumerGroup: "pixel-place-command-handlers"
+        topic: "pixel-place-commands"
+        # lagThreshold: cuántos mensajes por réplica antes de escalar
+        # 10 mensajes/réplica → con 100 mensajes = 10 réplicas
+        lagThreshold: "10"
+        offsetResetPolicy: latest
+
+    # ── TRIGGER 2: Lag en el topic de eventos ──────────────
+    # El event processor (ImageGenerationEventHandler, WebSocketEventHandler)
+    # también puede saturarse si hay muchos PixelPlacedEvents pendientes
+    - type: kafka
+      metadata:
+        bootstrapServers: "kafka-service:9092"
+        consumerGroup: "pixel-place-event-processors"
+        topic: "pixel-place-events"
+        lagThreshold: "10"
+        offsetResetPolicy: latest
+
+    # ── TRIGGER 3: CPU (respaldo) ───────────────────────────
+    # Si la generación de imágenes satura CPU pero el lag está bajo,
+    # este trigger garantiza que también escalemos por CPU.
+    - type: cpu
+      metadata:
+        type: Utilization
+        value: "70"
+
+    # ── TRIGGER 4: Memory (respaldo) ───────────────────────
+    - type: memory
+      metadata:
+        type: AverageValue
+        value: "800Mi"
+
+---
+# ── ScaledObject para el Materializer (consumer group separado) ─
+# El materializer puede tener un lag diferente al command handler.
+# Si quisieras escalar un deployment separado para el materializer,
+# crearías un ScaledObject aparte. Con un solo deployment, los triggers
+# de arriba ya cubren todos los grupos.
+#
+# NOTA: En pixel-place tienes un solo Deployment que maneja TODOS los
+# consumer groups (commands, events, materializer). Por eso solo hay
+# 1 ScaledObject arriba que monitorea los grupos más críticos.
+
+##############################################################################
+# Para usar KEDA con SASL/SSL en Kafka:
+# Descomenta y configura TriggerAuthentication
+##############################################################################
+#
+# apiVersion: keda.sh/v1alpha1
+# kind: TriggerAuthentication
+# metadata:
+#   name: kafka-trigger-auth
+#   namespace: pixel-place
+# spec:
+#   secretTargetRef:
+#     - parameter: sasl
+#       name: kafka-secrets
+#       key: sasl.mechanism
+#     - parameter: username
+#       name: kafka-secrets
+#       key: username
+#     - parameter: password
+#       name: kafka-secrets
+#       key: password

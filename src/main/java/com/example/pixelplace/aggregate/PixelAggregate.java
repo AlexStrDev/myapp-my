@@ -21,13 +21,14 @@ import java.util.List;
 /**
  * Aggregate que representa un Pixel individual en el canvas.
  *
- * ID del aggregate: "{x}_{y}" (ejemplo: "30_50")
+ * ID del aggregate: "{canvasId}_{x}_{y}" (ejemplo: "canvas-123_30_50")
  *
  * Responsabilidades:
  * - Validar posición del pixel
  * - Validar color
- * - Aplicar rate limiting por usuario
  * - Mantener historial de usuarios que modificaron el pixel
+ * 
+ * CAMBIO: Rate limiting DESHABILITADO para permitir colocación libre de pixeles
  */
 @Slf4j
 @Aggregate
@@ -35,17 +36,17 @@ import java.util.List;
 public class PixelAggregate {
 
     @AggregateIdentifier
-    private String pixelId;  // "{x}_{y}"
+    private String pixelId;  // "{canvasId}_{x}_{y}"
 
     private String canvasId;
-    private int x;  // ← Cambiado de xPosition
-    private int y;  // ← Cambiado de yPosition
+    private int x;
+    private int y;
     private String color;
     private List<PixelUser> pixelUsers;
 
-    // Configuración de rate limiting (idealmente desde properties)
-    private static final int MAX_PIXELS_PER_PERIOD = 3;
-    private static final int COOLDOWN_MINUTES = 5;
+    // Configuración de rate limiting (DESHABILITADO - guardado para uso futuro)
+    // private static final int MAX_PIXELS_PER_PERIOD = 3;
+    // private static final int COOLDOWN_MINUTES = 5;
 
     @CommandHandler
     @CreationPolicy(AggregateCreationPolicy.CREATE_IF_MISSING)
@@ -69,10 +70,14 @@ public class PixelAggregate {
             throw new IllegalArgumentException("El userId no puede estar vacío");
         }
 
-        // Rate limiting: verificar si el usuario puede colocar más pixeles
-        if (this.pixelUsers != null && !this.pixelUsers.isEmpty()) {
-            validateUserRateLimit(UserId.of(command.getUserId()));
-        }
+        // ========================================
+        // RATE LIMITING DESHABILITADO
+        // ========================================
+        // Si quieres reactivarlo en el futuro, descomenta:
+        // if (this.pixelUsers != null && !this.pixelUsers.isEmpty()) {
+        //     validateUserRateLimit(UserId.of(command.getUserId()));
+        // }
+        // ========================================
 
         // Construir lista actualizada de pixelUsers
         List<PixelUser> updatedPixelUsers = new ArrayList<>();
@@ -108,10 +113,13 @@ public class PixelAggregate {
 
     /**
      * Valida que el usuario no haya excedido el límite de pixeles.
-     *
+     * 
+     * ⚠️ ACTUALMENTE DESHABILITADO ⚠️
+     * 
      * Regla: Un usuario no puede colocar más de MAX_PIXELS_PER_PERIOD pixeles
      * en los últimos COOLDOWN_MINUTES minutos.
      */
+    /*
     private void validateUserRateLimit(UserId userId) {
         LocalDateTime now = LocalDateTime.now();
         LocalDateTime cutoffTime = now.minusMinutes(COOLDOWN_MINUTES);
@@ -132,6 +140,7 @@ public class PixelAggregate {
             );
         }
     }
+    */
 
     /**
      * Valida formato de color hex (#RRGGBB o #RGB)

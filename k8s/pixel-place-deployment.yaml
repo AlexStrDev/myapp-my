@@ -1,0 +1,267 @@
+##############################################################################
+# pixel-place-deployment.yaml
+#
+# Deployment de pixel-place en Kubernetes.
+#
+# CONSIDERACIONES ESPECIALES DE ESTE PROYECTO:
+#
+#   1. IMÁGENES DEL CANVAS (PVC):
+#      La app genera imágenes PNG de los tiles y canvas completo.
+#      Se necesita un PersistentVolumeClaim compartido entre pods
+#      para que todos lean/escriban en el mismo directorio.
+#
+#   2. WEBSOCKET (Sticky Sessions):
+#      Los clientes conectados via WebSocket deben llegar siempre
+#      al mismo pod. Configura tu ingress con sessionAffinity.
+#
+#   3. 100 PARTICIONES (tile strategy):
+#      Con 10x10 tiles = 100 particiones. Con concurrency=10 por pod
+#      → max 10 pods útiles. HPA.maxReplicas debe ser 10.
+#
+##############################################################################
+
+# ── Namespace ────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pixel-place
+
+---
+# ── PersistentVolumeClaim para imágenes del canvas ───────────
+# Todos los pods comparten este volumen para las imágenes generadas.
+# Se necesita ReadWriteMany (RWX) — soportado por NFS, EFS, GlusterFS, etc.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: canvas-images-pvc
+  namespace: pixel-place
+spec:
+  accessModes:
+    - ReadWriteMany      # RWX: múltiples pods pueden leer y escribir
+  storageClassName: ""   # ← cambia a tu StorageClass (ej: "efs-sc", "nfs-client")
+  resources:
+    requests:
+      storage: 10Gi      # Ajusta según el tamaño de tus canvas
+
+---
+# ── Secret para credenciales ─────────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: pixel-place-secrets
+  namespace: pixel-place
+type: Opaque
+stringData:
+  DB_PASSWORD: "postgres"               # ← cambiar en producción
+  KAFKA_BOOTSTRAP_SERVERS: "kafka-service:9092"
+
+---
+# ── Deployment ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pixel-place
+  namespace: pixel-place
+  labels:
+    app: pixel-place
+    version: "1.0.0"
+spec:
+  # replicas iniciales — HPA se encargará de ajustar
+  replicas: 2
+
+  selector:
+    matchLabels:
+      app: pixel-place
+
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1           # Máximo 1 pod extra durante rolling update
+      maxUnavailable: 0     # Nunca bajar pods antes de subir nuevos (zero-downtime)
+
+  template:
+    metadata:
+      labels:
+        app: pixel-place
+        version: "1.0.0"
+      annotations:
+        # Prometheus scrape automático
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+
+    spec:
+      # ── Graceful shutdown ─────────────────────────────────
+      # Kubernetes espera 60s antes de forzar la terminación.
+      # Spring Boot tiene 30s (configurado en application-kubernetes.yml).
+      # 60s > 30s → Spring siempre puede terminar limpio.
+      terminationGracePeriodSeconds: 60
+
+      # ── Anti-affinity: distribuir pods en distintos nodos ─
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values: ["pixel-place"]
+                topologyKey: kubernetes.io/hostname
+
+      containers:
+        - name: pixel-place
+          image: your-registry/pixel-place:1.0.0   # ← cambia por tu imagen
+          imagePullPolicy: Always
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # ── Variables de entorno ───────────────────────────
+          env:
+            # Identidad del pod (para métricas etiquetadas por pod)
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+
+            # Base de datos
+            - name: SPRING_DATASOURCE_URL
+              value: "jdbc:postgresql://postgres-service:5432/pixel_place_db"
+            - name: SPRING_DATASOURCE_USERNAME
+              value: "postgres"
+            - name: SPRING_DATASOURCE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: pixel-place-secrets
+                  key: DB_PASSWORD
+
+            # Kafka
+            - name: AXON_KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                secretKeyRef:
+                  name: pixel-place-secrets
+                  key: KAFKA_BOOTSTRAP_SERVERS
+
+            # Directorio de imágenes (debe coincidir con el mountPath del PVC)
+            - name: PIXEL_PLACE_IMAGE_GENERATION_STORAGE_DIRECTORY
+              value: "/var/canvas-images"
+
+          # ── Recursos ──────────────────────────────────────
+          # IMPORTANTE: HPA usa los "requests" para calcular los umbrales.
+          # CPU request=500m → umbral 70% = 350m de uso promedio
+          # Memory request=512Mi → el HPA mide uso absoluto (threshold 800Mi)
+          #
+          # pixel-place tiene:
+          #   - Generación de imágenes PNG (CPU intensivo)
+          #   - WebSocket connections (memoria)
+          #   - Kafka consumers (concurrency=10 por consumer)
+          resources:
+            requests:
+              cpu: "500m"       # 0.5 vCPU garantizado
+              memory: "512Mi"   # 512 MB garantizados
+            limits:
+              cpu: "2"          # Máximo 2 vCPU
+              memory: "1536Mi"  # Máximo 1.5 GB (JVM usa 75% = ~1.1 GB heap)
+
+          # ── Health Probes ─────────────────────────────────
+          # K8s envía tráfico solo cuando readiness pasa.
+          # Restarta el pod si liveness falla.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60   # Esperar a que Spring Boot arranque
+            periodSeconds: 15
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+
+          # ── Lifecycle: graceful drain ─────────────────────
+          # preStop añade 5s antes de que K8s envíe SIGTERM.
+          # Esto da tiempo al load balancer para dejar de enviar tráfico.
+          lifecycle:
+            preStop:
+              exec:
+                command: ["/bin/sh", "-c", "sleep 5"]
+
+          # ── Volume Mount para imágenes ────────────────────
+          volumeMounts:
+            - name: canvas-images
+              mountPath: /var/canvas-images
+
+      # ── Volúmenes ─────────────────────────────────────────
+      volumes:
+        - name: canvas-images
+          persistentVolumeClaim:
+            claimName: canvas-images-pvc
+
+---
+# ── Service ───────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: pixel-place-service
+  namespace: pixel-place
+  labels:
+    app: pixel-place
+spec:
+  selector:
+    app: pixel-place
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      protocol: TCP
+  type: ClusterIP
+
+---
+# ── Ingress con Sticky Sessions (necesario para WebSocket) ────
+# Los clientes WebSocket deben conectarse siempre al mismo pod.
+# Sin sticky sessions, el handshake WebSocket falla en pods distintos.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: pixel-place-ingress
+  namespace: pixel-place
+  annotations:
+    # Nginx ingress: activar sticky sessions para WebSocket
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/session-cookie-name: "PIXEL_PLACE_SESSION"
+    nginx.ingress.kubernetes.io/session-cookie-expires: "86400"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"    # 1h para WebSocket
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "Upgrade";
+spec:
+  rules:
+    - host: pixel-place.yourdomain.com   # ← cambia por tu dominio
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: pixel-place-service
+                port:
+                  number: 80
