@@ -1,0 +1,81 @@
+# prometheus-values.yaml
+prometheus:
+  prometheusSpec:
+    # Scrape interval global
+    scrapeInterval: 15s
+    evaluationInterval: 15s
+    
+    # Retención de datos (7 días)
+    retention: 7d
+    
+    # Recursos
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+    
+    # Scrape adicional para pixel-place
+    additionalScrapeConfigs:
+      - job_name: 'pixel-place'
+        kubernetes_sd_configs:
+          - role: pod
+            namespaces:
+              names:
+                - pixel-place
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+
+grafana:
+  enabled: true
+  adminPassword: "admin123"
+  
+  # Persistence
+  persistence:
+    enabled: false
+  
+  # Recursos
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 200m
+  
+  # Dashboards por defecto
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'default'
+          orgId: 1
+          folder: ''
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+alertmanager:
+  enabled: false
+
+# Desactivar componentes innecesarios para dev
+kubeStateMetrics:
+  enabled: true
+
+nodeExporter:
+  enabled: false
